@@ -12,6 +12,11 @@ import (
 )
 
 func main() {
+	if len(os.Args) < 2 {
+		fmt.Println("Deve especificar a pasta para a varredura!")
+		return
+	}
+
 	inputDir := os.Args[1]
 	outputDir := filepath.Join(inputDir, "thumbs")
 
