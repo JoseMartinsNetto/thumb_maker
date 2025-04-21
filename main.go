@@ -20,12 +20,9 @@ func main() {
 	inputDir := os.Args[1]
 	outputDir := filepath.Join(inputDir, "thumbs")
 
-	err := os.MkdirAll(outputDir, 0755)
-	if err != nil {
-		log.Fatalf("Erro ao criar pasta de saída: %v", err)
-	}
+	os.MkdirAll(outputDir, 0755)
 
-	err = filepath.Walk(inputDir, func(path string, info os.FileInfo, err error) error {
+	filepath.Walk(inputDir, func(path string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return err
 		}
@@ -37,73 +34,86 @@ func main() {
 
 		videoName := strings.TrimSuffix(filepath.Base(path), ext)
 		safeName := sanitizeFilename(videoName)
-		finalThumb := filepath.Join(outputDir, safeName+"_thumb.jpg")
+		tmpDir := filepath.Join(os.TempDir(), "thumbs_"+safeName)
+		os.MkdirAll(tmpDir, 0755)
 
-		// 1. Obter duração do vídeo
-		duration := getVideoDuration(path)
-
-		// 2. Gerar imagem de thumbs
-		cmdThumb := exec.Command("ffmpeg", "-i", path,
-			"-vf", "select=not(mod(n\\,100)),scale=320:-1,tile=5x1",
-			"-frames:v", "1", finalThumb)
-
-		cmdThumb.Stdout = os.Stdout
-		cmdThumb.Stderr = os.Stderr
-		fmt.Println("Gerando thumbs para:", path)
-		if err := cmdThumb.Run(); err != nil {
-			log.Printf("Erro ao gerar thumbs de %s: %v\n", path, err)
+		durationSec := getDurationSeconds(path)
+		if durationSec <= 0 {
+			log.Printf("Duração inválida para %s", path)
 			return nil
 		}
 
-		// 3. Adicionar texto com ImageMagick
-		text := fmt.Sprintf("Duração: %s", duration)
+		// Posições: 1/6, 2/6, ..., 5/6 da duração
+		var thumbFiles []string
+		for i := 1; i <= 5; i++ {
+			sec := float64(i) * durationSec / 6
+			ts := fmt.Sprintf("%02d:%02d:%02d", int(sec)/3600, (int(sec)%3600)/60, int(sec)%60)
+			outFile := filepath.Join(tmpDir, fmt.Sprintf("thumb_%d.jpg", i))
+			cmd := exec.Command("ffmpeg", "-ss", ts, "-i", path, "-frames:v", "1", "-q:v", "2", outFile)
+			cmd.Stdout = nil
+			cmd.Stderr = nil
+			cmd.Run()
+			thumbFiles = append(thumbFiles, outFile)
+		}
 
-		cmdText := exec.Command("convert", finalThumb,
+		// Compor imagem final com os 5 thumbs
+		outputFile := filepath.Join(outputDir, safeName+"_thumb.jpg")
+		args := append([]string{"+append"}, thumbFiles...)
+		args = append(args, outputFile)
+		err = exec.Command("convert", args...).Run()
+		if err != nil {
+			log.Printf("Erro ao compor thumbs de %s: %v", videoName, err)
+			return nil
+		}
+
+		// Adicionar anotação da duração com convert
+		durationStr := formatDuration(durationSec)
+		annotatedCmd := exec.Command("convert", outputFile,
 			"-gravity", "NorthWest",
-			"-pointsize", "24",
+			"-pointsize", "72",
 			"-fill", "white",
 			"-undercolor", "black",
-			"-annotate", "+10+10", text,
-			finalThumb)
+			"-annotate", "+10+10", "Duração: "+durationStr,
+			outputFile)
 
-		cmdText.Stdout = os.Stdout
-		cmdText.Stderr = os.Stderr
-		fmt.Println("Adicionando texto com ImageMagick...")
-		if err := cmdText.Run(); err != nil {
-			log.Printf("Erro ao adicionar texto em %s: %v\n", finalThumb, err)
+		annotatedCmd.Stdout = nil
+		annotatedCmd.Stderr = nil
+		err = annotatedCmd.Run()
+		if err != nil {
+			log.Printf("Erro ao adicionar texto na imagem: %v", err)
 		}
+
+		fmt.Println("Thumbs geradas:", outputFile)
 
 		return nil
 	})
-
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	fmt.Println("Finalizado.")
 }
 
-// getVideoDuration retorna a duração no formato HH:MM:SS
-func getVideoDuration(path string) string {
+// getDurationSeconds usa ffprobe para extrair a duração em segundos
+func getDurationSeconds(path string) float64 {
 	cmd := exec.Command("ffprobe", "-v", "error", "-show_entries",
 		"format=duration", "-of", "default=noprint_wrappers=1:nokey=1", path)
 
 	var out bytes.Buffer
 	cmd.Stdout = &out
-	if err := cmd.Run(); err != nil {
-		return "00:00:00"
+	err := cmd.Run()
+	if err != nil {
+		return 0
 	}
 
 	var dur float64
 	fmt.Sscanf(out.String(), "%f", &dur)
-	h := int(dur) / 3600
-	m := (int(dur) % 3600) / 60
-	s := int(dur) % 60
-	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
+	return dur
 }
 
-// sanitizeFilename remove caracteres inválidos de nomes de arquivos
 func sanitizeFilename(name string) string {
 	re := regexp.MustCompile(`[^a-zA-Z0-9_-]+`)
 	return re.ReplaceAllString(name, "_")
+}
+
+func formatDuration(seconds float64) string {
+	h := int(seconds) / 3600
+	m := (int(seconds) % 3600) / 60
+	s := int(seconds) % 60
+	return fmt.Sprintf("%02d:%02d:%02d", h, m, s)
 }
