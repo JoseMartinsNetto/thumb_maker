@@ -1,8 +1,8 @@
-BIN=thumb_maker
-ENTRY_POINT=main.go
+BIN=thmk
+ENTRY_POINT=cmd/thumb_maker/*.go
 
 clean:
-	@rm -rf bin/$(BIN)
+	@rm -rf bin/**
 
 build: clean
 	@go build -o bin/$(BIN) $(ENTRY_POINT)
