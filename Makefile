@@ -11,6 +11,9 @@ export: build
 	@echo "Adding $(BIN) to temp PATH..."
 	@export PATH="$(shell pwd)/bin:$(PATH)"
 
+install:
+	@sudo cp bin/thmk $(GOPATH)/bin/
+
 run:
 	@go run $(ENTRY_POINT)
 
